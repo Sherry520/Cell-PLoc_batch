@@ -111,17 +111,24 @@ jobs:
           # 2. 动态创建 Markdown 描述文件
           echo "## 📦 Version ${{ steps.auto_tag.outputs.new_tag }} Changelog" > release_body.md
           
-          echo -e "\n### 🚀 New Features (新功能)" >> release_body.md
+          # 使用 [ -n "$变量" ] 判断，只有不为空时才写入标题和内容
           FEATS=$(echo "$COMMIT_LOG" | grep -E '^\* feat' || true)
-          if [ -z "$FEATS" ]; then echo "* No new features in this version." >> release_body.md; else echo "$FEATS" >> release_body.md; fi
+          if [ -n "$FEATS" ]; then
+            echo -e "\n### 🚀 New Features (新功能)" >> release_body.md
+            echo "$FEATS" >> release_body.md
+          fi
           
-          echo -e "\n### 🐛 Bug Fixes (缺陷修复)" >> release_body.md
           FIXES=$(echo "$COMMIT_LOG" | grep -E '^\* fix' || true)
-          if [ -z "$FIXES" ]; then echo "* No bug fixes in this version." >> release_body.md; else echo "$FIXES" >> release_body.md; fi
+          if [ -n "$FIXES" ]; then
+            echo -e "\n### 🐛 Bug Fixes (缺陷修复)" >> release_body.md
+            echo "$FIXES" >> release_body.md
+          fi
           
-          echo -e "\n### 📝 Documentation (文档更新)" >> release_body.md
           DOCS=$(echo "$COMMIT_LOG" | grep -E '^\* docs' || true)
-          if [ -z "$DOCS" ]; then echo "* No documentation changes." >> release_body.md; else echo "$DOCS" >> release_body.md; fi
+          if [ -n "$DOCS" ]; then
+            echo -e "\n### 📝 Documentation (文档更新)" >> release_body.md
+            echo "$DOCS" >> release_body.md
+          fi
           
           echo -e "\n---" >> release_body.md
           echo "*Generated automatically by Ultimate Pipeline.*" >> release_body.md
