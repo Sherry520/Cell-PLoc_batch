@@ -1,81 +1,106 @@
-name: Auto Test, Build and Release
+name: Ultimate Auto Tag, Test and Release
 
 on:
   push:
-    tags:
-      - 'v*' # 当推送以 v 开头的标签时触发
+    branches:
+      - main # 🎯 触发条件改了！以后只要你往 main 分支推送代码，就自动触发
 
 permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    name: Build and Test on ${{ matrix.os }}
+  # ==================== 任务 1：编译与测试 ====================
+  build-and-test:
+    name: Build & Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest]
 
     steps:
-      # 1. 拉取代码
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. 配置 Python 环境
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # 3. 安装依赖
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 pyinstaller
 
-      # 4. 执行 PyInstaller 打包
       - name: Build with PyInstaller
-        run: |
-          pyinstaller -F cell-ploc-batch.py
+        run: pyinstaller -F cell-ploc-batch.py
 
-      # ⭐ 5. 自动化测试步骤：创建临时测试数据，并强制运行打包好的程序
-      - name: Run Automated Integration Test
+      # 自动化真机集成测试
+      - name: Run Integration Test
         run: |
-          # 创建一个仅包含一条记录的标准测试 FASTA 文件
           echo -e ">Test_Protein\nMAAAAALCAALFLLVAAAAAAA" > gaction_test.fasta
-          
-          # 根据不同系统，运行刚刚打包好的原生二进制文件（测试 CLI 模式）
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             ./dist/cell-ploc-batch.exe -i gaction_test.fasta -o test_out.txt
           else
             ./dist/cell-ploc-batch -i gaction_test.fasta -o test_out.txt
           fi
-          
-          # 验证：检查输出文件 test_out.txt 是否真的存在
-          if [ ! -f "test_out.txt" ]; then
-            echo "[CRITICAL ERROR] Test failed! Output file was not generated."
-            exit 1
+          if [ ! -f "test_out.txt" ]; then exit 1; fi
+        shell: bash
+
+      # 重命名，防止两个系统的成品重名
+      - name: Rename Binaries
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            mv dist/cell-ploc-batch.exe dist/cell-ploc-batch-windows.exe
+          else
+            mv dist/cell-ploc-batch dist/cell-ploc-batch-linux
           fi
-          
-          echo "[SUCCESS] Integration test passed perfectly!"
         shell: bash
 
-      # 6. 测试通过后，重命名二进制文件（Windows 端）
-      - name: Rename Binary (Windows)
-        if: matrix.os == 'windows-latest'
-        run: mv dist/cell-ploc-batch.exe dist/cell-ploc-batch-windows.exe
-        shell: bash
+      # ⭐ 核心改动：把编译好的二进制文件临时“上传存盘”到 GitHub 缓存区
+      - name: Save Temporary Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-binaries-${{ matrix.os }}
+          path: |
+            dist/cell-ploc-batch-windows.exe
+            dist/cell-ploc-batch-linux
+          if-no-files-found: error
 
-      # 7. 测试通过后，重命名二进制文件（Linux 端）
-      - name: Rename Binary (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: mv dist/cell-ploc-batch dist/cell-ploc-batch-linux
-        shell: bash
+  # ==================== 任务 2：自动计算 Tag 并发布 ====================
+  create-release:
+    name: Auto Tag and Create Release
+    needs: build-and-test # ✋ 必须等上面的编译和测试全部成功通过，才执行本任务
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 拉取全部历史历史，方便计算版本号
 
-      # 8. 最终把关：只有上面的步骤全部变绿，才会创建 Release 并挂载 Assets
-      - name: Upload Artifacts to GitHub Release
+      # ⭐ 核心改动：自动检测已有 Tag，并根据 Commit 自动递增生成新 Tag
+      - name: Bump version and push tag
+        id: auto_tag
+        uses: anothrNick/github-tag-action@1.64.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true          # 生成带 v 的标签，如 v1.1.2
+          DEFAULT_BUMP: patch   # 默认递增最后一位数字（例如 v1.1.1 -> v1.1.2）
+
+      # 从 GitHub 缓存区把刚才存好的 Windows 和 Linux 二进制文件打包下载下来
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: compiled-binaries-*
+          merge-multiple: true
+          path: dist/
+
+      # 正式创建 Release 节点
+      - name: Upload Binaries to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.auto_tag.outputs.new_tag }} # 使用上面自动算出来的最新 Tag
+          generate_release_notes: true                     # 自动生成精美的英文更新日志
           files: |
             dist/cell-ploc-batch-windows.exe
             dist/cell-ploc-batch-linux
