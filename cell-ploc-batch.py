@@ -23,7 +23,6 @@ def parse_fasta(fasta_file):
             if line.startswith('>'):
                 if current_header:
                     sequences.append((current_header, ''.join(current_seq)))
-                # 只取 > 后面的第一个单词作为蛋白质 ID
                 current_header = line[1:].split()[0]
                 current_seq = []
             else:
@@ -44,6 +43,12 @@ def batch_predict_subcellular(fasta_input_path, output_result_path):
         print(f"\n[错误] 读取 FASTA 失败: {e}")
         return
 
+    # ⭐ 【核心修改点】检查并自动生成输出目录
+    output_dir = os.path.dirname(output_result_path)
+    if output_dir and not os.path.exists(output_dir):
+        print(f"[提示] 输出目录 '{output_dir}' 不存在，正在自动创建...")
+        os.makedirs(output_dir, exist_ok=True)
+
     # 2. 访问主页获取表单提交的真实路径
     print("正在连接交大 Plant-mPLoc 服务器...")
     session = requests.Session()
@@ -63,14 +68,12 @@ def batch_predict_subcellular(fasta_input_path, output_result_path):
     action = form.get('action', '')
     action_url = urllib.parse.urljoin(base_url, action)
     
-    # 提取网页表单中可能存在的隐藏参数
     form_data = {}
     for inp in form.find_all('input'):
         name = inp.get('name')
         if name and name != 'S1':
             form_data[name] = inp.get('value', '')
 
-    # 定义该网站支持的植物亚细胞定位关键词
     known_locations = [
         "Cell membrane", "Plasma membrane", "Cell wall", "Chloroplast", "Cytoplasm", 
         "Endoplasmic reticulum", "Extracellular", "Golgi apparatus", 
@@ -80,7 +83,6 @@ def batch_predict_subcellular(fasta_input_path, output_result_path):
     # 3. 开始循环提交预测
     print(f"开始批量预测，结果将实时保存至: {output_result_path}\n" + "-"*50)
     with open(output_result_path, 'w', encoding='utf-8') as out_f:
-        # 写入表头
         out_f.write("Protein_ID\tPredicted_Location\n")
         
         for idx, (header, seq) in enumerate(sequences, 1):
@@ -119,13 +121,11 @@ def batch_predict_subcellular(fasta_input_path, output_result_path):
             out_f.write(f"{header}\t{location_result}\n")
             out_f.flush()
             
-            # 学术网站建议防封延迟
             time.sleep(2)
             
     print("-"*50 + f"\n[完成] 全部预测结束！结果已成功保存至: {output_result_path}")
 
 if __name__ == "__main__":
-    # 配置命令行参数解析
     parser = argparse.ArgumentParser(description="Plant-mPLoc 批量植物蛋白亚细胞定位预测工具")
     parser.add_argument("-i", "--input", help="输入的 FASTA 文件路径")
     parser.add_argument("-o", "--output", help="输出的结果文件路径（可选）")
@@ -134,23 +134,19 @@ if __name__ == "__main__":
     input_fasta_path = args.input
     output_file_path = args.output
 
-    # 方式一：如果没有通过命令行参数传参，则进入交互式输入
     if not input_fasta_path:
         print("="*60)
         print("欢迎使用 Plant-mPLoc 批量预测工具")
         print("提示：在 Windows/Mac 中，您可以直接把 FASTA 文件拖拽到本窗口内自动输入路径")
         print("="*60)
         raw_input = input("请输入或拖入您的 FASTA 文件路径: ")
-        # strip('"') 和 strip("'") 用来移除拖拽文件进窗口时可能自带的引号
         input_fasta_path = raw_input.strip().strip('"').strip("'")
     
-    # 如果没有指定输出路径，默认在输入文件名后面加上 _subcellular_results.txt
     if not output_file_path:
         base, ext = os.path.splitext(input_fasta_path)
         output_file_path = f"{base}_subcellular_results.txt"
         print(f"--> 未指定输出文件，结果将默认保存至: {output_file_path}")
 
-    # 执行预测
     if input_fasta_path:
         batch_predict_subcellular(input_fasta_path, output_file_path)
     else:
