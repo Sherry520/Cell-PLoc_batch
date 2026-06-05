@@ -1,0 +1,4 @@
+Protein_ID	Predicted_Location
+Zm00001eb010460	Cell membrane
+Zm00001eb018230	Cell membrane
+Zm00001eb018250	Cell membrane
