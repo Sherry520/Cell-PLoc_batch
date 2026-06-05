@@ -1,0 +1,62 @@
+name: Auto Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*' # 当你推送以 v 开头的标签（如 v1.0.0）时，触发该流水线
+
+permissions:
+  contents: write # 赋予 GitHub Actions 权限去创建和修改 Release
+
+jobs:
+  build-and-release:
+    name: Build Binary on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest] # 同时在 Windows 和 Linux 虚拟机上跑打包
+
+    steps:
+      # 1. 拉取你的代码
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 2. 配置 Python 环境
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 3. 安装你脚本需要的第三方库和打包工具
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 pyinstaller
+
+      # 4. 使用 PyInstaller 进行打包
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller -F cell-ploc-batch.py
+
+      # 5. 为了区分系统，给打包出来的文件重命名（Windows 端）
+      - name: Rename Binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: mv dist/cell-ploc-batch.exe dist/cell-ploc-batch-windows.exe
+        shell: bash
+
+      # 6. 为了区分系统，给打包出来的文件重命名（Linux 端）
+      - name: Rename Binary (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: mv dist/cell-ploc-batch dist/cell-ploc-batch-linux
+        shell: bash
+
+      # 7. 自动创建 Release 并上传对应的二进制文件
+      - name: Upload Artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/cell-ploc-batch-windows.exe
+            dist/cell-ploc-batch-linux
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 自动调用系统内置的 Token，无需手动配置
+          
