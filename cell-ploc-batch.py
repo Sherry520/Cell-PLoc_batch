@@ -1,5 +1,6 @@
 import os
 import time
+import argparse
 import requests
 from bs4 import BeautifulSoup
 import urllib.parse
@@ -37,25 +38,25 @@ def batch_predict_subcellular(fasta_input_path, output_result_path):
     # 1. 解析 FASTA 文件
     try:
         sequences = parse_fasta(fasta_input_path)
-        print(f"成功读取 FASTA 文件，共包含 {len(sequences)} 条蛋白质序列。")
+        print(f"\n[成功] 读取 FASTA 文件，共包含 {len(sequences)} 条蛋白质序列。")
     except Exception as e:
-        print(f"读取 FASTA 失败: {e}")
+        print(f"\n[错误] 读取 FASTA 失败: {e}")
         return
 
-    # 2. 访问主页获取表单提交的真实路径（CGI 脚本路径）
+    # 2. 访问主页获取表单提交的真实路径
     print("正在连接交大 Plant-mPLoc 服务器...")
     session = requests.Session()
     try:
         response = session.get(base_url, timeout=15)
         response.raise_for_status()
     except Exception as e:
-        print(f"无法连接到服务器，请检查网络或网站是否维护: {e}")
+        print(f"[错误] 无法连接到服务器，请检查网络或网站是否维护: {e}")
         return
 
     soup = BeautifulSoup(response.text, 'html.parser')
     form = soup.find('form')
     if not form:
-        print("错误：未能从网页中解析出提交表单。")
+        print("[错误] 未能从网页中解析出提交表单。")
         return
         
     action = form.get('action', '')
@@ -65,18 +66,18 @@ def batch_predict_subcellular(fasta_input_path, output_result_path):
     form_data = {}
     for inp in form.find_all('input'):
         name = inp.get('name')
-        if name and name != 'S1':  # 'S1' 是输入序列的 textarea 框名
+        if name and name != 'S1':
             form_data[name] = inp.get('value', '')
 
-    # 3. 唯一定义该网站支持的 12 种植物亚细胞定位关键词，用于精确匹配
+    # 定义该网站支持的植物亚细胞定位关键词
     known_locations = [
         "Cell membrane", "Plasma membrane", "Cell wall", "Chloroplast", "Cytoplasm", 
         "Endoplasmic reticulum", "Extracellular", "Golgi apparatus", 
         "Mitochondrion", "Nucleus", "Peroxisome", "Plastid", "Vacuole"
     ]
 
-    # 4. 开始循环提交预测
-    print("开始批量预测定位，结果将实时保存...")
+    # 3. 开始循环提交预测
+    print(f"开始批量预测，结果将实时保存至: {output_result_path}\n" + "-"*50)
     with open(output_result_path, 'w', encoding='utf-8') as out_f:
         # 写入表头
         out_f.write("Protein_ID\tPredicted_Location\n")
@@ -84,29 +85,24 @@ def batch_predict_subcellular(fasta_input_path, output_result_path):
         for idx, (header, seq) in enumerate(sequences, 1):
             print(f"[{idx}/{len(sequences)}] 正在查询: {header} ... ", end="", flush=True)
             
-            # 包装成单条 FASTA 格式
             fasta_payload = f">{header}\n{seq}"
             current_payload = form_data.copy()
             current_payload['S1'] = fasta_payload
             
             location_result = "Unknown"
             try:
-                # 提交 POST 请求
                 post_res = session.post(action_url, data=current_payload, timeout=30)
                 post_res.raise_for_status()
                 
-                # 解析返回的结果网页文本
                 res_soup = BeautifulSoup(post_res.text, 'html.parser')
                 page_text = res_soup.get_text()
                 
-                # 提取定位结果：重点寻找 "Predicted location" 之后的文本
                 if "Predicted location" in page_text:
                     after_keyword = page_text.split("Predicted location")[-1]
                     found_locs = [loc for loc in known_locations if loc.lower() in after_keyword.lower()]
                     if found_locs:
                         location_result = ", ".join(found_locs)
                 else:
-                    # 备用表格解析：遍历所有 td 单元格
                     cells = [td.get_text(strip=True) for td in res_soup.find_all('td')]
                     for i, cell in enumerate(cells):
                         if "Predicted location" in cell and i + 1 < len(cells):
@@ -119,19 +115,42 @@ def batch_predict_subcellular(fasta_input_path, output_result_path):
                 location_result = f"Error ({str(e)})"
             
             print(location_result)
-            # 实时写入文件
             out_f.write(f"{header}\t{location_result}\n")
             out_f.flush()
             
-            # 【重要】学术网站建议加上时间延迟（如 2 秒），避免因请求过快被服务器封禁 IP
+            # 学术网站建议防封延迟
             time.sleep(2)
             
-    print(f"\n全部预测完成！结果已成功保存至: {output_file_path}")
+    print("-"*50 + f"\n[完成] 全部预测结束！结果已成功保存至: {output_result_path}")
 
 if __name__ == "__main__":
-    # 配置你的输入文件和输出文件路径
-    input_fasta_path = "sequences.fasta"  # 你的上百个序列的 fasta 文件路径
-    output_file_path = "subcellular_results.txt"  # 预测结果输出路径
+    # 配置命令行参数解析
+    parser = argparse.ArgumentParser(description="Plant-mPLoc 批量植物蛋白亚细胞定位预测工具")
+    parser.add_argument("-i", "--input", help="输入的 FASTA 文件路径")
+    parser.add_argument("-o", "--output", help="输出的结果文件路径（可选）")
+    args = parser.parse_args()
+
+    input_fasta_path = args.input
+    output_file_path = args.output
+
+    # 方式一：如果没有通过命令行参数传参，则进入交互式输入
+    if not input_fasta_path:
+        print("="*60)
+        print("欢迎使用 Plant-mPLoc 批量预测工具")
+        print("提示：在 Windows/Mac 中，您可以直接把 FASTA 文件拖拽到本窗口内自动输入路径")
+        print("="*60)
+        raw_input = input("请输入或拖入您的 FASTA 文件路径: ")
+        # strip('"') 和 strip("'") 用来移除拖拽文件进窗口时可能自带的引号
+        input_fasta_path = raw_input.strip().strip('"').strip("'")
     
-    # 执行批量预测
-    batch_predict_subcellular(input_fasta_path, output_file_path)
+    # 如果没有指定输出路径，默认在输入文件名后面加上 _subcellular_results.txt
+    if not output_file_path:
+        base, ext = os.path.splitext(input_fasta_path)
+        output_file_path = f"{base}_subcellular_results.txt"
+        print(f"--> 未指定输出文件，结果将默认保存至: {output_file_path}")
+
+    # 执行预测
+    if input_fasta_path:
+        batch_predict_subcellular(input_fasta_path, output_file_path)
+    else:
+        print("[错误] 未提供有效的输入文件路径。")
