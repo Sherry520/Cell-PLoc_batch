@@ -7,13 +7,13 @@ from bs4 import BeautifulSoup
 import urllib.parse
 
 def parse_fasta(fasta_file):
-    """解析输入的 FASTA 文件，返回一个包含 (header, sequence) 的列表"""
+    """Parses the input FASTA file and returns a list of tuples: (header, sequence)"""
     sequences = []
     current_header = None
     current_seq = []
     
     if not os.path.exists(fasta_file):
-        raise FileNotFoundError(f"未找到输入文件: {fasta_file}")
+        raise FileNotFoundError(f"Input file not found: {fasta_file}")
         
     with open(fasta_file, 'r', encoding='utf-8') as f:
         for line in f:
@@ -23,6 +23,7 @@ def parse_fasta(fasta_file):
             if line.startswith('>'):
                 if current_header:
                     sequences.append((current_header, ''.join(current_seq)))
+                # Extract the first word after '>' as the Protein ID
                 current_header = line[1:].split()[0]
                 current_seq = []
             else:
@@ -35,58 +36,61 @@ def parse_fasta(fasta_file):
 def batch_predict_subcellular(fasta_input_path, output_result_path):
     base_url = "http://www.csbio.sjtu.edu.cn/bioinf/plant-multi/"
     
-    # 1. 解析 FASTA 文件
+    # 1. Parse the FASTA file
     try:
         sequences = parse_fasta(fasta_input_path)
-        print(f"\n[成功] 读取 FASTA 文件，共包含 {len(sequences)} 条蛋白质序列。")
+        print(f"\n[SUCCESS] Read FASTA file, containing {len(sequences)} protein sequences.")
     except Exception as e:
-        print(f"\n[错误] 读取 FASTA 失败: {e}")
+        print(f"\n[ERROR] Failed to read FASTA file: {e}")
         return
 
-    # ⭐ 【核心修改点】检查并自动生成输出目录
+    # 2. Check and automatically create the output directory if it doesn't exist
     output_dir = os.path.dirname(output_result_path)
     if output_dir and not os.path.exists(output_dir):
-        print(f"[提示] 输出目录 '{output_dir}' 不存在，正在自动创建...")
+        print(f"[INFO] Output directory '{output_dir}' does not exist. Creating it automatically...")
         os.makedirs(output_dir, exist_ok=True)
 
-    # 2. 访问主页获取表单提交的真实路径
-    print("正在连接交大 Plant-mPLoc 服务器...")
+    # 3. Connect to the homepage to extract the valid form action URL
+    print("Connecting to SJTU Plant-mPLoc server...")
     session = requests.Session()
     try:
         response = session.get(base_url, timeout=15)
         response.raise_for_status()
     except Exception as e:
-        print(f"[错误] 无法连接到服务器，请检查网络或网站是否维护: {e}")
+        print(f"[ERROR] Failed to connect to the server. Please check your network or if the website is down: {e}")
         return
 
     soup = BeautifulSoup(response.text, 'html.parser')
     form = soup.find('form')
     if not form:
-        print("[错误] 未能从网页中解析出提交表单。")
+        print("[ERROR] Failed to parse the submission form from the webpage.")
         return
         
     action = form.get('action', '')
     action_url = urllib.parse.urljoin(base_url, action)
     
+    # Extract any hidden input fields if present
     form_data = {}
     for inp in form.find_all('input'):
         name = inp.get('name')
-        if name and name != 'S1':
+        if name and name != 'S1':  # 'S1' is the textarea field name for sequences
             form_data[name] = inp.get('value', '')
 
+    # Known target locations for accurate mapping
     known_locations = [
         "Cell membrane", "Plasma membrane", "Cell wall", "Chloroplast", "Cytoplasm", 
         "Endoplasmic reticulum", "Extracellular", "Golgi apparatus", 
         "Mitochondrion", "Nucleus", "Peroxisome", "Plastid", "Vacuole"
     ]
 
-    # 3. 开始循环提交预测
-    print(f"开始批量预测，结果将实时保存至: {output_result_path}\n" + "-"*50)
+    # 4. Start iterative form submission
+    print(f"Starting batch prediction, results will be saved in real-time to: {output_result_path}\n" + "-"*60)
     with open(output_result_path, 'w', encoding='utf-8') as out_f:
+        # Write header row
         out_f.write("Protein_ID\tPredicted_Location\n")
         
         for idx, (header, seq) in enumerate(sequences, 1):
-            print(f"[{idx}/{len(sequences)}] 正在查询: {header} ... ", end="", flush=True)
+            print(f"[{idx}/{len(sequences)}] Querying: {header} ... ", end="", flush=True)
             
             fasta_payload = f">{header}\n{seq}"
             current_payload = form_data.copy()
@@ -121,33 +125,39 @@ def batch_predict_subcellular(fasta_input_path, output_result_path):
             out_f.write(f"{header}\t{location_result}\n")
             out_f.flush()
             
+            # 2-second delay to comply with standard academic crawler guidelines
             time.sleep(2)
             
-    print("-"*50 + f"\n[完成] 全部预测结束！结果已成功保存至: {output_result_path}")
+    print("-"*60 + f"\n[FINISHED] All predictions completed! Results successfully saved to: {output_result_path}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Plant-mPLoc 批量植物蛋白亚细胞定位预测工具")
-    parser.add_argument("-i", "--input", help="输入的 FASTA 文件路径")
-    parser.add_argument("-o", "--output", help="输出的结果文件路径（可选）")
+    # Setup command line argument parsing
+    parser = argparse.ArgumentParser(description="Plant-mPLoc Batch Predictor for Plant Protein Subcellular Localization")
+    parser.add_argument("-i", "--input", help="Path to the input FASTA file")
+    parser.add_argument("-o", "--output", help="Path to the output results file (optional)")
     args = parser.parse_args()
 
     input_fasta_path = args.input
     output_file_path = args.output
 
+    # Interactive prompt if CLI arguments are missing
     if not input_fasta_path:
         print("="*60)
-        print("欢迎使用 Plant-mPLoc 批量预测工具")
-        print("提示：在 Windows/Mac 中，您可以直接把 FASTA 文件拖拽到本窗口内自动输入路径")
+        print("Welcome to Plant-mPLoc Batch Predictor")
+        print("Tip: On Windows/Mac, you can directly drag and drop your FASTA file into this window.")
         print("="*60)
-        raw_input = input("请输入或拖入您的 FASTA 文件路径: ")
+        raw_input = input("Please enter or drag & drop your FASTA file path: ")
         input_fasta_path = raw_input.strip().strip('"').strip("'")
     
-    if not output_file_path:
+    # Generate default output name if not explicitly provided
+    if not output_file_path and input_fasta_path:
         base, ext = os.path.splitext(input_fasta_path)
         output_file_path = f"{base}_subcellular_results.txt"
-        print(f"--> 未指定输出文件，结果将默认保存至: {output_file_path}")
+        print(f"--> No output file specified. Results will be saved by default to: {output_file_path}")
 
+    # Fire the calculation
     if input_fasta_path:
         batch_predict_subcellular(input_fasta_path, output_file_path)
     else:
-        print("[错误] 未提供有效的输入文件路径。")
+        print("[ERROR] No valid input file path provided.")
+        
