@@ -1,23 +1,23 @@
-name: Auto Build and Release
+name: Auto Test, Build and Release
 
 on:
   push:
     tags:
-      - 'v*' # 当你推送以 v 开头的标签（如 v1.0.0）时，触发该流水线
+      - 'v*' # 当推送以 v 开头的标签时触发
 
 permissions:
-  contents: write # 赋予 GitHub Actions 权限去创建和修改 Release
+  contents: write
 
 jobs:
   build-and-release:
-    name: Build Binary on ${{ matrix.os }}
+    name: Build and Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest] # 同时在 Windows 和 Linux 虚拟机上跑打包
+        os: [windows-latest, ubuntu-latest]
 
     steps:
-      # 1. 拉取你的代码
+      # 1. 拉取代码
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -27,30 +27,52 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 3. 安装你脚本需要的第三方库和打包工具
+      # 3. 安装依赖
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 pyinstaller
 
-      # 4. 使用 PyInstaller 进行打包
+      # 4. 执行 PyInstaller 打包
       - name: Build with PyInstaller
         run: |
           pyinstaller -F cell-ploc-batch.py
 
-      # 5. 为了区分系统，给打包出来的文件重命名（Windows 端）
+      # ⭐ 5. 自动化测试步骤：创建临时测试数据，并强制运行打包好的程序
+      - name: Run Automated Integration Test
+        run: |
+          # 创建一个仅包含一条记录的标准测试 FASTA 文件
+          echo -e ">Test_Protein\nMAAAAALCAALFLLVAAAAAAA" > gaction_test.fasta
+          
+          # 根据不同系统，运行刚刚打包好的原生二进制文件（测试 CLI 模式）
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            ./dist/cell-ploc-batch.exe -i gaction_test.fasta -o test_out.txt
+          else
+            ./dist/cell-ploc-batch -i gaction_test.fasta -o test_out.txt
+          fi
+          
+          # 验证：检查输出文件 test_out.txt 是否真的存在
+          if [ ! -f "test_out.txt" ]; then
+            echo "[CRITICAL ERROR] Test failed! Output file was not generated."
+            exit 1
+          fi
+          
+          echo "[SUCCESS] Integration test passed perfectly!"
+        shell: bash
+
+      # 6. 测试通过后，重命名二进制文件（Windows 端）
       - name: Rename Binary (Windows)
         if: matrix.os == 'windows-latest'
         run: mv dist/cell-ploc-batch.exe dist/cell-ploc-batch-windows.exe
         shell: bash
 
-      # 6. 为了区分系统，给打包出来的文件重命名（Linux 端）
+      # 7. 测试通过后，重命名二进制文件（Linux 端）
       - name: Rename Binary (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: mv dist/cell-ploc-batch dist/cell-ploc-batch-linux
         shell: bash
 
-      # 7. 自动创建 Release 并上传对应的二进制文件
+      # 8. 最终把关：只有上面的步骤全部变绿，才会创建 Release 并挂载 Assets
       - name: Upload Artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -58,5 +80,5 @@ jobs:
             dist/cell-ploc-batch-windows.exe
             dist/cell-ploc-batch-linux
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 自动调用系统内置的 Token，无需手动配置
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
