@@ -140,8 +140,12 @@ if __name__ == "__main__":
     input_fasta_path = args.input
     output_file_path = args.output
 
+    # Whether is in the double-click interaction mode
+    is_interactive = False
+
     # Interactive prompt if CLI arguments are missing
     if not input_fasta_path:
+        is_interactive = True # 没有传参，说明是双击运行的
         print("="*60)
         print("Welcome to Plant-mPLoc Batch Predictor")
         print("Tip: On Windows/Mac, you can directly drag and drop your FASTA file into this window.")
@@ -160,4 +164,8 @@ if __name__ == "__main__":
         batch_predict_subcellular(input_fasta_path, output_file_path)
     else:
         print("[ERROR] No valid input file path provided.")
-        
+
+    # If run by double-clicking, force a pause at the end and wait for the user to press Enter before closing.
+    if is_interactive:
+        print("\n" + "="*60)
+        input("Execution finished. Press Enter to exit...")
